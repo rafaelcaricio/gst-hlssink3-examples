@@ -6,29 +6,10 @@ from typing import Optional
 
 import gi
 gi.require_version('Gst', '1.0')
-from gi.repository import GObject, Gst
+from gi.repository import GLib, Gst
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger('hls_server')
-
-
-def bus_call(_bus, message, loop):
-    t = message.type
-    if t == Gst.MessageType.EOS:
-        print("End-of-stream")
-        loop.quit()
-    elif t == Gst.MessageType.ERROR:
-        err, debug = message.parse_error()
-        fail(f"Bus error: {err}:{debug}")
-        loop.quit()
-    return True
-
-
-def gst_element(element_name: str, alias: Optional[str] = None) -> Gst.Element:
-    element = Gst.ElementFactory.make(element_name, alias)
-    if element is None:
-        fail(f"Could not find element {element_name}")
-    return element
 
 
 class FileHlsOrigin:
@@ -56,7 +37,8 @@ class FileHlsOrigin:
         audio_queue = gst_element("queue")
 
         hlssink3 = gst_element("hlssink3", "hls")
-        hlssink3.set_property("playlist-location", "master.m3u8")
+        hlssink3.set_property("location", "public/segment%05d.ts")
+        hlssink3.set_property("playlist-location", "public/master.m3u8")
         hlssink3.set_property("target-duration", 6)
         hlssink3.set_property("playlist-length", 5)
         hlssink3.set_property("max-files", 5)
@@ -89,14 +71,14 @@ class FileHlsOrigin:
         new_pad_type = new_pad_struct.get_name()
 
         if new_pad_type.startswith("audio/"):
-            log.info(f"Audio pad added to origin element: {new_pad_type}")
+            log.debug(f"Audio pad added to origin element: {new_pad_type}")
             audioconvert_sink = self.audioconvert.get_static_pad('sink')
             if audioconvert_sink.is_linked():
                 log.warning("Already linked audio contents source. Ignoring..")
             new_pad.link(audioconvert_sink)
 
         elif new_pad_type.startswith('video/'):
-            log.info(f"Video pad added to origin element: {new_pad_type}")
+            log.debug(f"Video pad added to origin element: {new_pad_type}")
             videoconvert_sink = self.videoconvert.get_static_pad('sink')
             if videoconvert_sink.is_linked():
                 log.warning("Already linked video contents source. Ignoring..")
@@ -115,7 +97,7 @@ def main():
 
     origin = FileHlsOrigin(sys.argv[-1])
 
-    loop = GObject.MainLoop()
+    loop = GLib.MainLoop()
     bus = origin.pipeline.get_bus()
     bus.add_signal_watch()
     bus.connect("message", bus_call, loop)
@@ -125,28 +107,37 @@ def main():
     try:
         print("Running pipeline..")
         loop.run()
+    except KeyboardInterrupt:
+        log.info("Stopping pipeline...")
     finally:
         # cleanup
         origin.pipeline.set_state(Gst.State.NULL)
-        print("All good! ;)")
+        log.info("All good! ;)")
+
+
+def bus_call(_bus, message, loop):
+    t = message.type
+    if t == Gst.MessageType.EOS:
+        print("End-of-stream")
+        loop.quit()
+    elif t == Gst.MessageType.ERROR:
+        err, debug = message.parse_error()
+        fail(f"Bus error: {err}:{debug}")
+        loop.quit()
+    return True
+
+
+def gst_element(element_name: str, alias: Optional[str] = None) -> Gst.Element:
+    element = Gst.ElementFactory.make(element_name, alias)
+    if element is None:
+        fail(f"Could not find element {element_name}")
+    return element
 
 
 def fail(message: str) -> None:
     traceback.print_stack()
-    print(f"\nFailure: {message}")
+    log.error(f"\nFailure: {message}")
     sys.exit(1)
-
-
-def pairwise(iterable):
-    a, b = itertools.tee(iterable)
-    next(b, None)
-    return zip(a, b)
-
-
-def link_many(*args):
-    for pair in pairwise(args):
-        if not pair[0].link(pair[1]):
-            fail(f'Failed to link {pair[0]} and {pair[1]}')
 
 
 if __name__ == '__main__':
