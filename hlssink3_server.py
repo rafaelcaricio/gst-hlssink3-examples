@@ -1,6 +1,8 @@
+import math
 import sys
 import traceback
 import logging
+from enum import Enum
 from typing import Optional
 
 import gi
@@ -12,7 +14,12 @@ log = logging.getLogger('hls_server')
 
 
 class FileHlsOrigin:
-    def __init__(self, filename: str) -> None:
+    def __init__(
+            self,
+            filename: str,
+            target_duration_secs: int = 6,
+            fps: float = 29.97,
+    ) -> None:
         if Gst.uri_is_valid(filename):
             self.uri = filename
         else:
@@ -25,7 +32,6 @@ class FileHlsOrigin:
         self.origin.connect("pad-added", self.on_origin_pad_added)
 
         self.videoconvert = gst_element("videoconvert")
-
         self.audioconvert = gst_element("audioconvert")
         audio_encoder = gst_element("avenc_aac")
 
@@ -37,13 +43,18 @@ class FileHlsOrigin:
 
         video_encoder = gst_element("x264enc")
         video_encoder.set_property("bitrate", 2100)
-        video_encoder.set_property("key-int-max", 180)
+
+        key_int_max = math.ceil(fps) * target_duration_secs
+        video_encoder.set_property("key-int-max", key_int_max)
+        log.debug(f"x264enc.key-int-max={key_int_max}")
+
         video_encoder.set_property("speed-preset", "fast")
-        video_encoder.set_property("option-string", "min-keyint=179:scenecut=0")
+        video_encoder.set_property("option-string", "scenecut=0")
         video_encoder.set_property("tune", "zerolatency")
 
         video_encoder_capsfilter = gst_element("capsfilter")
-        video_encoder_capsfilter.props.caps = Gst.caps_from_string("video/x-h264,stream-format=avc,alignment=au,profile=main,framerate=(fraction)30000/1001")
+        video_encoder_capsfilter.props.caps = Gst.caps_from_string(
+            f"video/x-h264,stream-format=avc,alignment=au,profile=main")
 
         h264parse = gst_element("h264parse")
 
@@ -52,7 +63,7 @@ class FileHlsOrigin:
         hlssink3 = gst_element("hlssink3", "hls")
         hlssink3.set_property("location", "segment%05d.ts")
         hlssink3.set_property("playlist-location", "master.m3u8")
-        hlssink3.set_property("target-duration", 6)
+        hlssink3.set_property("target-duration", target_duration_secs)
         hlssink3.set_property("playlist-length", 15)
         hlssink3.set_property("max-files", 16)
 
