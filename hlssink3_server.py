@@ -1,6 +1,5 @@
 import sys
 import traceback
-import itertools
 import logging
 from typing import Optional
 
@@ -26,36 +25,55 @@ class FileHlsOrigin:
         self.origin.connect("pad-added", self.on_origin_pad_added)
 
         self.videoconvert = gst_element("videoconvert")
+
         self.audioconvert = gst_element("audioconvert")
         audio_encoder = gst_element("avenc_aac")
 
         video_queue = gst_element("queue")
-        # videoscale = gst_element("videoscale")
-        video_encoder = gst_element("vtenc_h264_hw")
+        videoscale = gst_element("videoscale")
+
+        videoscale_capsfilter = gst_element("capsfilter")
+        videoscale_capsfilter.props.caps = Gst.caps_from_string("video/x-raw,format=I420,width=960,height=540")
+
+        video_encoder = gst_element("x264enc")
+        video_encoder.set_property("bitrate", 2100)
+        video_encoder.set_property("key-int-max", 180)
+        video_encoder.set_property("speed-preset", "fast")
+        video_encoder.set_property("option-string", "min-keyint=179:scenecut=0")
+        video_encoder.set_property("tune", "zerolatency")
+
+        video_encoder_capsfilter = gst_element("capsfilter")
+        video_encoder_capsfilter.props.caps = Gst.caps_from_string("video/x-h264,stream-format=avc,alignment=au,profile=main,framerate=(fraction)30000/1001")
+
         h264parse = gst_element("h264parse")
 
         audio_queue = gst_element("queue")
 
         hlssink3 = gst_element("hlssink3", "hls")
-        hlssink3.set_property("location", "public/segment%05d.ts")
-        hlssink3.set_property("playlist-location", "public/master.m3u8")
+        hlssink3.set_property("location", "segment%05d.ts")
+        hlssink3.set_property("playlist-location", "master.m3u8")
         hlssink3.set_property("target-duration", 6)
-        hlssink3.set_property("playlist-length", 5)
-        hlssink3.set_property("max-files", 5)
+        hlssink3.set_property("playlist-length", 15)
+        hlssink3.set_property("max-files", 16)
 
         self.pipeline.add(self.origin)
         self.pipeline.add(self.videoconvert)
         self.pipeline.add(self.audioconvert)
         self.pipeline.add(audio_encoder)
         self.pipeline.add(video_queue)
-        # self.pipeline.add(videoscale)
+        self.pipeline.add(videoscale)
+        self.pipeline.add(videoscale_capsfilter)
         self.pipeline.add(video_encoder)
+        self.pipeline.add(video_encoder_capsfilter)
         self.pipeline.add(h264parse)
         self.pipeline.add(audio_queue)
         self.pipeline.add(hlssink3)
 
         self.pipeline.link(self.origin)
-        Gst.Element.link_many(self.videoconvert, video_queue, video_encoder, h264parse, hlssink3)
+        Gst.Element.link_many(
+            self.videoconvert, video_queue, videoscale, videoscale_capsfilter, video_encoder,
+            video_encoder_capsfilter, h264parse, hlssink3
+        )
         Gst.Element.link_many(self.audioconvert, audio_queue, audio_encoder)
 
         hls_sink_pad_templ = hlssink3.get_pad_template('audio')
