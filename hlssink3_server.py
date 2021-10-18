@@ -2,7 +2,6 @@ import math
 import sys
 import traceback
 import logging
-from enum import Enum
 from typing import Optional
 
 import gi
@@ -30,6 +29,8 @@ class FileHlsOrigin:
         self.origin = gst_element("uridecodebin", "origin")
         self.origin.set_property('uri', self.uri)
         self.origin.connect("pad-added", self.on_origin_pad_added)
+
+        self.video_multi = gst_element("tee", "video_multi")
 
         self.videoconvert = gst_element("videoconvert")
         self.audioconvert = gst_element("audioconvert")
@@ -61,14 +62,22 @@ class FileHlsOrigin:
         audio_queue = gst_element("queue")
 
         hlssink3 = gst_element("hlssink3", "hls")
-        hlssink3.set_property("location", "segment%05d.ts")
+        # hlssink3.set_property("playlist-type", "event")
+        # hlssink3.set_property("playlist-type", "vod")
+        hlssink3.set_property("playlist-type", None)
+        hlssink3.set_property("location", "part-%07d.ts")
         hlssink3.set_property("playlist-location", "master.m3u8")
         hlssink3.set_property("target-duration", target_duration_secs)
         hlssink3.set_property("playlist-length", 15)
-        hlssink3.set_property("max-files", 16)
+        hlssink3.set_property("max-files", 30)
+        hlssink3.set_property("send-keyframe-requests", False)
+
+        fakesink = gst_element("fakesink")
+        fakesink.set_property("sync", True)
 
         self.pipeline.add(self.origin)
         self.pipeline.add(self.videoconvert)
+        self.pipeline.add(self.video_multi)
         self.pipeline.add(self.audioconvert)
         self.pipeline.add(audio_encoder)
         self.pipeline.add(video_queue)
@@ -79,6 +88,7 @@ class FileHlsOrigin:
         self.pipeline.add(h264parse)
         self.pipeline.add(audio_queue)
         self.pipeline.add(hlssink3)
+        self.pipeline.add(fakesink)
 
         self.pipeline.link(self.origin)
         Gst.Element.link_many(
@@ -94,6 +104,9 @@ class FileHlsOrigin:
 
         audio_encoder_src.link(hls_sink)
 
+        self.link_with_request(self.video_multi, self.videoconvert)
+        self.link_with_request(self.video_multi, fakesink)
+
     def on_origin_pad_added(self, _src, new_pad):
         new_pad_caps = new_pad.get_current_caps()
         new_pad_struct = new_pad_caps.get_structure(0)
@@ -108,14 +121,26 @@ class FileHlsOrigin:
 
         elif new_pad_type.startswith('video/'):
             log.debug(f"Video pad added to origin element: {new_pad_type}")
-            videoconvert_sink = self.videoconvert.get_static_pad('sink')
-            if videoconvert_sink.is_linked():
+            video_multi_sink = self.video_multi.get_static_pad('sink')
+            if video_multi_sink.is_linked():
                 log.warning("Already linked video contents source. Ignoring..")
                 return
-            new_pad.link(videoconvert_sink)
+            new_pad.link(video_multi_sink)
 
         else:
             log.error(f"New unexpected pad added to origin element with type: {new_pad_type}")
+
+    @staticmethod
+    def link_with_request(src_elem, sink_elem):
+        # capture source pad
+        src_pad_templ = src_elem.get_pad_template("src_%u")
+        src_pad = src_elem.request_pad(src_pad_templ)
+
+        # capture sink pad
+        sink_pad = sink_elem.get_static_pad('sink')
+
+        # link both
+        src_pad.link(sink_pad)
 
 
 def main():
