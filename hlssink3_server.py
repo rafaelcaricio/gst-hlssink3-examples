@@ -50,7 +50,7 @@ class FileHlsOrigin:
         log.debug(f"x264enc.key-int-max={key_int_max}")
 
         video_encoder.set_property("speed-preset", "fast")
-        video_encoder.set_property("option-string", "scenecut=0")
+        video_encoder.set_property("option-string", f"keyint={key_int_max}:min-keyint={key_int_max}:scenecut=0:force-cfr=1")
         video_encoder.set_property("tune", "zerolatency")
 
         video_encoder_capsfilter = gst_element("capsfilter")
@@ -63,9 +63,9 @@ class FileHlsOrigin:
 
         hlssink3 = gst_element("hlssink3", "hls")
         # hlssink3.set_property("playlist-type", "event")
-        # hlssink3.set_property("playlist-type", "vod")
-        hlssink3.set_property("playlist-type", None)
-        hlssink3.set_property("location", "part-%07d.ts")
+        hlssink3.set_property("playlist-type", "vod")
+        # hlssink3.set_property("playlist-type", None)
+        hlssink3.set_property("location", "part%07d.ts")
         hlssink3.set_property("playlist-location", "master.m3u8")
         hlssink3.set_property("target-duration", target_duration_secs)
         hlssink3.set_property("playlist-length", 15)
